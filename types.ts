@@ -1,3 +1,4 @@
+
 export enum UserRole {
   WORKER = 'WORKER',
   SUPERVISOR = 'SUPERVISOR',
@@ -57,18 +58,18 @@ export interface ReportEntry {
   type: 'text' | 'file' | 'link';
   attachmentUrl?: string;
   attachmentName?: string;
-  timestamp: string; // ISO format for sorting/cleanup
+  timestamp: string;
 }
 
 export interface ChatMessage {
   id: string;
   senderId: string;
   senderName: string;
-  text: string;
+  text?: string;
+  audioUrl?: string;
   timestamp: string;
   type: 'group' | 'private' | 'multi';
   departmentId?: string;
-  recipientIds?: string[];
 }
 
 export interface FileEntry {
@@ -104,6 +105,7 @@ export interface Employee {
   workplace?: string; 
   workplaceLat?: number;
   workplaceLng?: number;
+  joinedAt?: string;
 }
 
 export type Language = 'ar' | 'en';
