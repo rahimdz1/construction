@@ -58,8 +58,15 @@ const App: React.FC = () => {
       
       if (attLogs) {
         setLogs(attLogs.map((l: any) => ({
-          ...l,
-          location: { lat: l.location_lat, lng: l.location_lng }
+          id: l.id,
+          employeeId: l.employeeId,
+          name: l.name,
+          timestamp: l.timestamp,
+          type: l.type as 'IN' | 'OUT',
+          photo: l.photo,
+          location: { lat: Number(l.location_lat), lng: Number(l.location_lng) },
+          status: l.status as AttendanceStatus,
+          departmentId: l.departmentId
         })));
       }
       if (config) setCompanyConfig({ name: config.name, logo: config.logo });
@@ -70,32 +77,40 @@ const App: React.FC = () => {
 
   useEffect(() => {
     const init = async () => {
-      const saved = localStorage.getItem('construction_v8_session');
+      const saved = localStorage.getItem('const_v10_session');
       if (saved && saved !== 'null') {
-        try { setCurrentUser(JSON.parse(saved)); } catch (e) { localStorage.removeItem('construction_v8_session'); }
+        try { setCurrentUser(JSON.parse(saved)); } catch (e) { localStorage.removeItem('const_v10_session'); }
       }
       await fetchInitialData();
       setLoading(false);
     };
     init();
 
-    // البث اللحظي (Realtime)
+    // إعداد الاشتراك اللحظي - التحقق من كل الجداول ذات الصلة
     const channel = supabase
-      .channel('schema-db-changes')
+      .channel('db-live-v10')
       .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'attendance_logs' }, (payload) => {
         const raw = payload.new;
         const newLog: LogEntry = {
-          ...raw,
-          location: { lat: raw.location_lat, lng: raw.location_lng }
-        } as LogEntry;
+          id: raw.id,
+          employeeId: raw.employeeId,
+          name: raw.name,
+          timestamp: raw.timestamp,
+          type: raw.type as 'IN' | 'OUT',
+          photo: raw.photo,
+          location: { lat: Number(raw.location_lat), lng: Number(raw.location_lng) },
+          status: raw.status as AttendanceStatus,
+          departmentId: raw.departmentId
+        };
         
         setLogs(prev => {
           if (prev.some(l => l.id === newLog.id)) return prev;
+          // تشغيل تنبيه صوتي للمدير
           if (currentUserRef.current === 'ADMIN') {
-            const audio = new Audio(newLog.type === 'IN' 
+            const soundUrl = newLog.type === 'IN' 
               ? 'https://assets.mixkit.co/active_storage/sfx/2358/2358-preview.mp3' 
-              : 'https://assets.mixkit.co/active_storage/sfx/2354/2354-preview.mp3');
-            audio.play().catch(() => {});
+              : 'https://assets.mixkit.co/active_storage/sfx/2354/2354-preview.mp3';
+            new Audio(soundUrl).play().catch(() => {});
           }
           return [newLog, ...prev];
         });
@@ -116,8 +131,8 @@ const App: React.FC = () => {
 
   useEffect(() => {
     if (!loading) {
-      if (currentUser) localStorage.setItem('construction_v8_session', JSON.stringify(currentUser));
-      else localStorage.removeItem('construction_v8_session');
+      if (currentUser) localStorage.setItem('const_v10_session', JSON.stringify(currentUser));
+      else localStorage.removeItem('const_v10_session');
     }
   }, [currentUser, loading]);
 
@@ -137,14 +152,14 @@ const App: React.FC = () => {
 
   const handleLogout = () => {
     setCurrentUser(null);
-    localStorage.removeItem('construction_v8_session');
+    localStorage.removeItem('const_v10_session');
   };
 
   if (loading) {
     return (
       <div className="min-h-screen bg-slate-900 flex flex-col items-center justify-center text-white font-['Cairo']">
         <Loader2 className="animate-spin text-blue-500 mb-4" size={54} />
-        <p className="animate-pulse font-bold tracking-widest text-xs uppercase">تحديث السحابة الميدانية...</p>
+        <p className="animate-pulse font-bold text-xs uppercase tracking-widest">تحديث القنوات الميدانية...</p>
       </div>
     );
   }
@@ -179,7 +194,9 @@ const App: React.FC = () => {
         onSendMessage={async (m) => { await supabase.from('chat_messages').insert(m); }} 
         onLogout={handleLogout} 
         onNewLog={async (nl) => { 
+          // 1. تحديث الحالة المحلية فوراً
           setLogs(prev => [nl, ...prev]); 
+          // 2. إرسال لـ Supabase
           const { error: dbError } = await supabase.from('attendance_logs').insert({
             id: nl.id, 
             employeeId: nl.employeeId, 
@@ -192,7 +209,10 @@ const App: React.FC = () => {
             status: nl.status, 
             departmentId: nl.departmentId
           });
-          if (dbError) console.error("Save failed:", dbError.message);
+          if (dbError) {
+            console.error("Supabase Save Error:", dbError.message);
+            alert("حدث خطأ أثناء حفظ البيانات في السحابة.");
+          }
         }} 
         onNewReport={async (r) => { 
           setReports(prev => [r, ...prev]); 
@@ -210,14 +230,14 @@ const App: React.FC = () => {
             {companyConfig.logo ? <img src={companyConfig.logo} className="w-full h-full object-cover" /> : <ShieldCheck size={48} />}
           </div>
           <h1 className="text-3xl font-bold mb-2">{companyConfig.name}</h1>
-          <p className="text-slate-400 text-sm tracking-widest font-bold uppercase">Field Ops Center</p>
+          <p className="text-slate-400 text-sm tracking-widest font-bold uppercase">Field Connect v10</p>
         </div>
         <div className="bg-white/10 backdrop-blur-xl p-8 rounded-[3rem] border border-white/10 shadow-2xl">
           <form onSubmit={handleLogin} className="space-y-6 text-white">
-            <input type="text" placeholder="رقم الهاتف" className="w-full bg-white/5 border border-white/20 rounded-2xl py-4 px-4 text-center font-bold outline-none focus:ring-2 focus:ring-blue-500 shadow-inner transition-all" value={phoneInput} onChange={(e) => setPhoneInput(e.target.value)} />
-            {phoneInput !== ADMIN_PIN && <input type="password" placeholder="كلمة المرور" className="w-full bg-white/5 border border-white/20 rounded-2xl py-4 px-4 text-center font-bold outline-none focus:ring-2 focus:ring-blue-500 shadow-inner transition-all" value={passwordInput} onChange={(e) => setPasswordInput(e.target.value)} />}
+            <input type="text" placeholder="رقم الهاتف" className="w-full bg-white/5 border border-white/20 rounded-2xl py-4 px-4 text-center font-bold outline-none focus:ring-2 focus:ring-blue-500 transition-all" value={phoneInput} onChange={(e) => setPhoneInput(e.target.value)} />
+            {phoneInput !== ADMIN_PIN && <input type="password" placeholder="كلمة المرور" className="w-full bg-white/5 border border-white/20 rounded-2xl py-4 px-4 text-center font-bold outline-none focus:ring-2 focus:ring-blue-500 transition-all" value={passwordInput} onChange={(e) => setPasswordInput(e.target.value)} />}
             {error && <p className="text-red-400 text-xs text-center font-bold">{error}</p>}
-            <button type="submit" className="w-full bg-blue-600 py-5 rounded-2xl font-black shadow-lg hover:bg-blue-700 transition-all active:scale-95 text-lg uppercase">دخول النظام</button>
+            <button type="submit" className="w-full bg-blue-600 py-5 rounded-2xl font-black shadow-lg hover:bg-blue-700 transition-all active:scale-95 text-lg uppercase tracking-widest">دخول النظام</button>
           </form>
         </div>
       </div>
