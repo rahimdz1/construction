@@ -1,5 +1,6 @@
+
 import React, { useState, useEffect } from 'react';
-import { Employee, LogEntry, ReportEntry, ChatMessage, FileEntry, Announcement, Language, Department, CompanyConfig } from './types';
+import { Employee, LogEntry, ReportEntry, ChatMessage, FileEntry, Announcement, Language, Department, CompanyConfig, AttendanceStatus } from './types';
 import { MOCK_EMPLOYEES, ADMIN_PIN, DEPARTMENTS as INITIAL_DEPARTMENTS, TRANSLATIONS, MOCK_REPORTS, MOCK_CHATS } from './constants';
 import WorkerDashboard from './components/WorkerDashboard';
 import AdminDashboard from './components/AdminDashboard';
@@ -28,26 +29,56 @@ const App: React.FC = () => {
 
   const t = TRANSLATIONS[lang];
 
+  // 1. استعادة الجلسة عند تحميل التطبيق
   useEffect(() => {
+    const savedUser = localStorage.getItem('construction_user');
+    if (savedUser) {
+      try {
+        const parsed = JSON.parse(savedUser);
+        setCurrentUser(parsed);
+      } catch (e) {
+        localStorage.removeItem('construction_user');
+      }
+    }
     fetchInitialData();
+
+    // إعداد تحديث تلقائي للبيانات كل 30 ثانية لضمان تزامن الإدارة
+    const interval = setInterval(fetchInitialData, 30000);
+    return () => clearInterval(interval);
   }, []);
 
+  // 2. حفظ الجلسة عند تغيير المستخدم
+  useEffect(() => {
+    if (currentUser) {
+      localStorage.setItem('construction_user', JSON.stringify(currentUser));
+    } else {
+      localStorage.removeItem('construction_user');
+    }
+  }, [currentUser]);
+
   const fetchInitialData = async () => {
-    setLoading(true);
     try {
       const { data: emps } = await supabase.from('employees').select('*');
       const { data: depts } = await supabase.from('departments').select('*');
-      const { data: attLogs } = await supabase.from('attendance_logs').select('*').order('timestamp', { ascending: false });
-      const { data: repts } = await supabase.from('reports').select('*');
+      const { data: attLogs } = await supabase.from('attendance_logs').select('*').order('created_at', { ascending: false });
+      const { data: repts } = await supabase.from('reports').select('*').order('timestamp', { ascending: false });
       const { data: msgs } = await supabase.from('chat_messages').select('*').order('timestamp', { ascending: true });
       const { data: fls } = await supabase.from('files').select('*');
       const { data: anns } = await supabase.from('announcements').select('*');
       const { data: config } = await supabase.from('company_config').select('*').maybeSingle();
 
-      setEmployees(emps && emps.length ? emps : MOCK_EMPLOYEES);
-      setDepartments(depts && depts.length ? depts : INITIAL_DEPARTMENTS);
-      setReports(repts && repts.length ? repts : MOCK_REPORTS);
-      setMessages(msgs && msgs.length ? msgs : MOCK_CHATS);
+      if (emps && emps.length) setEmployees(emps);
+      else setEmployees(MOCK_EMPLOYEES);
+
+      if (depts && depts.length) setDepartments(depts);
+      else setDepartments(INITIAL_DEPARTMENTS);
+
+      if (repts && repts.length) setReports(repts);
+      else setReports(MOCK_REPORTS);
+
+      if (msgs && msgs.length) setMessages(msgs);
+      else setMessages(MOCK_CHATS);
+
       setFiles(fls || []);
       setAnnouncements(anns || []);
 
@@ -62,10 +93,6 @@ const App: React.FC = () => {
 
     } catch (err) {
       console.error("Fetch Error:", err);
-      setEmployees(MOCK_EMPLOYEES);
-      setDepartments(INITIAL_DEPARTMENTS);
-      setReports(MOCK_REPORTS);
-      setMessages(MOCK_CHATS);
     } finally {
       setLoading(false);
     }
@@ -73,16 +100,12 @@ const App: React.FC = () => {
 
   const handleUpdateEmployees = async (updated: Employee[]) => {
     setEmployees(updated);
-    // Sync with database
-    const { error } = await supabase.from('employees').upsert(updated);
-    if (error) console.error("Error updating employees:", error);
+    await supabase.from('employees').upsert(updated);
   };
 
   const handleUpdateDepartments = async (updated: Department[]) => {
     setDepartments(updated);
-    // Sync with database
-    const { error } = await supabase.from('departments').upsert(updated);
-    if (error) console.error("Error updating departments:", error);
+    await supabase.from('departments').upsert(updated);
   };
 
   const handleLogin = (e?: React.FormEvent) => {
@@ -129,7 +152,7 @@ const App: React.FC = () => {
     setIsRegistering(false);
   };
 
-  if (loading) {
+  if (loading && !currentUser) {
     return (
       <div className="min-h-screen bg-slate-900 flex flex-col items-center justify-center text-white gap-6">
         <Loader2 className="animate-spin text-blue-500" size={64} />
@@ -168,7 +191,7 @@ const App: React.FC = () => {
   if (currentUser) {
     return (
       <WorkerDashboard 
-        employee={currentUser} chatMessages={messages} departmentFiles={files} 
+        employee={currentUser as Employee} chatMessages={messages} departmentFiles={files} 
         announcements={announcements} companyConfig={companyConfig}
         lang={lang} onSetLang={setLang}
         onSendMessage={async (m) => { 
@@ -177,17 +200,29 @@ const App: React.FC = () => {
         }} 
         onLogout={() => setCurrentUser(null)} 
         onNewLog={async (newLog) => { 
+          // تحديث الحالة المحلية فوراً ليراها العامل
           setLogs(prev => [newLog, ...prev]); 
-          await supabase.from('attendance_logs').insert({
-            ...newLog,
+          // الإرسال لقاعدة البيانات
+          const { error } = await supabase.from('attendance_logs').insert({
+            id: newLog.id,
+            employeeId: newLog.employeeId,
+            name: newLog.name,
+            timestamp: newLog.timestamp,
+            type: newLog.type,
+            photo: newLog.photo,
             location_lat: newLog.location.lat,
             location_lng: newLog.location.lng,
-            location: undefined
+            status: newLog.status,
+            departmentId: newLog.departmentId
           });
+          if (error) console.error("Sync Log Error:", error);
+          else fetchInitialData(); // إعادة الجلب للتأكد من المزامنة
         }} 
         onNewReport={async (r) => { 
           setReports(prev => [r, ...prev]); 
-          await supabase.from('reports').insert(r);
+          const { error } = await supabase.from('reports').insert(r);
+          if (error) console.error("Sync Report Error:", error);
+          else fetchInitialData();
         }}
       />
     );
@@ -213,13 +248,13 @@ const App: React.FC = () => {
             </form>
           ) : (
             <form onSubmit={handleLogin} className="space-y-6">
-              <input type="text" placeholder={t.phone} className="w-full bg-white/5 border border-white/20 rounded-2xl py-4 px-4" value={phoneInput} onChange={(e) => setPhoneInput(e.target.value)} />
+              <input type="text" placeholder={t.phone} className="w-full bg-white/5 border border-white/20 rounded-2xl py-4 px-4 shadow-inner outline-none focus:ring-2 focus:ring-blue-500" value={phoneInput} onChange={(e) => setPhoneInput(e.target.value)} />
               {phoneInput !== ADMIN_PIN && phoneInput !== '123' && (
-                <input type="password" placeholder={t.password} className="w-full bg-white/5 border border-white/20 rounded-2xl py-4 px-4" value={passwordInput} onChange={(e) => setPasswordInput(e.target.value)} />
+                <input type="password" placeholder={t.password} className="w-full bg-white/5 border border-white/20 rounded-2xl py-4 px-4 shadow-inner outline-none focus:ring-2 focus:ring-blue-500" value={passwordInput} onChange={(e) => setPasswordInput(e.target.value)} />
               )}
-              {error && <p className="text-red-400 text-xs text-center">{error}</p>}
-              <button type="submit" className="w-full bg-blue-600 py-4 rounded-2xl font-bold">{t.login}</button>
-              <button type="button" onClick={handleStartActivation} className="w-full text-blue-400 text-xs font-bold mt-4 underline">تفعيل حساب موظف جديد</button>
+              {error && <p className="text-red-400 text-xs text-center font-bold animate-bounce">{error}</p>}
+              <button type="submit" className="w-full bg-blue-600 py-4 rounded-2xl font-bold shadow-lg hover:bg-blue-700 transition-all active:scale-95">{t.login}</button>
+              <button type="button" onClick={handleStartActivation} className="w-full text-blue-400 text-xs font-bold mt-4 underline hover:text-blue-300">تفعيل حساب موظف جديد</button>
             </form>
           )}
         </div>
