@@ -1,8 +1,9 @@
 
-import React, { useState, useEffect } from 'react';
+import React, { useState } from 'react';
 import { 
   LogOut, Clock, ShieldCheck, Navigation, Camera, Zap, 
-  MessageSquare, FileText, Inbox, User, Loader2, Check, Activity, Cpu, AlertCircle 
+  MessageSquare, FileText, User, Loader2, Activity, Cpu, 
+  Plus, Send, Image as ImageIcon, CheckCircle2 
 } from 'lucide-react';
 import { 
   Employee, AttendanceStatus, LogEntry, ReportEntry, ChatMessage, 
@@ -25,37 +26,63 @@ interface WorkerDashboardProps {
 }
 
 const WorkerDashboard: React.FC<WorkerDashboardProps> = ({
-  employee, chatMessages = [], departmentFiles = [], companyConfig,
-  onSendMessage, onLogout, onNewLog, onNewReport
+  employee, companyConfig, onLogout, onNewLog, chatMessages, onSendMessage, onNewReport
 }) => {
-  const [activeTab, setActiveTab] = useState<'attendance' | 'id' | 'reports' | 'chat' | 'documents'>('attendance');
+  const [activeTab, setActiveTab] = useState<'attendance' | 'id' | 'reports' | 'chat'>('attendance');
   const [showCamera, setShowCamera] = useState(false);
-  const [cameraMode, setCameraMode] = useState<'attendance' | 'report'>('attendance');
   const [isCapturing, setIsCapturing] = useState<'IN' | 'OUT' | null>(null);
   const [isProcessing, setIsProcessing] = useState(false);
   const [reportContent, setReportContent] = useState('');
   const [chatInput, setChatInput] = useState('');
 
-  // حالة الحضور
   const [currentStatus, setCurrentStatus] = useState<'IN' | 'OUT'>(() => {
     return (localStorage.getItem(`status_v12_${employee.id}`) as 'IN' | 'OUT') || 'OUT';
   });
 
   const handleAttendanceClick = (type: 'IN' | 'OUT') => {
     setIsCapturing(type);
-    setCameraMode('attendance');
     setShowCamera(true);
   };
 
+  const handleSendReport = async () => {
+    if (!reportContent.trim()) return;
+    const newReport: ReportEntry = {
+      id: `rep_${Date.now()}`,
+      employeeId: employee.id,
+      employeeName: employee.name,
+      departmentId: employee.departmentId,
+      content: reportContent,
+      type: 'text',
+      timestamp: new Date().toISOString()
+    };
+    await onNewReport(newReport);
+    setReportContent('');
+    alert('تم إرسال التقرير بنجاح');
+  };
+
+  const handleSendChat = async () => {
+    if (!chatInput.trim()) return;
+    const newMsg: ChatMessage = {
+      id: `msg_${Date.now()}`,
+      senderId: employee.id,
+      senderName: employee.name,
+      text: chatInput,
+      timestamp: new Date().toLocaleTimeString('ar-EG', { hour: '2-digit', minute: '2-digit' }),
+      type: 'group',
+      departmentId: employee.departmentId
+    };
+    await onSendMessage(newMsg);
+    setChatInput('');
+  };
+
   return (
-    <div className="min-h-screen bg-slate-50 flex flex-col pb-32 overflow-x-hidden font-['Cairo']" dir="rtl">
+    <div className="min-h-screen bg-slate-50 flex flex-col pb-24 overflow-x-hidden font-['Cairo']" dir="rtl">
       {isProcessing && (
         <div className="fixed inset-0 z-[100] bg-slate-900/90 backdrop-blur-2xl flex flex-col items-center justify-center text-white p-8 text-center">
           <div className="w-24 h-24 bg-blue-600 rounded-[2.5rem] flex items-center justify-center mb-8 shadow-2xl animate-pulse">
             <Activity size={48} className="text-white" />
           </div>
           <h2 className="text-2xl font-black mb-4 uppercase tracking-widest">توثيق البيانات</h2>
-          <p className="text-slate-400 text-xs font-bold leading-relaxed max-w-xs">يرجى الانتظار، نقوم الآن بربط إحداثيات الموقع مع صورتك لضمان توثيق الحضور بشكل قانوني...</p>
           <Loader2 className="animate-spin text-blue-500 mt-10" size={32} />
         </div>
       )}
@@ -66,18 +93,17 @@ const WorkerDashboard: React.FC<WorkerDashboardProps> = ({
             {companyConfig.logo ? <img src={companyConfig.logo} className="w-full h-full object-cover" /> : <ShieldCheck size={28} />}
           </div>
           <div>
-            <h1 className="font-black text-slate-800 text-[11px] uppercase tracking-widest leading-none">{companyConfig.name}</h1>
-            <p className="text-[9px] font-black text-blue-600 uppercase tracking-tighter mt-1">Smart Field Bridge</p>
+            <h1 className="font-black text-slate-800 text-[11px] uppercase tracking-widest leading-none truncate max-w-[150px]">{companyConfig.name}</h1>
+            <p className="text-[9px] text-slate-400 font-bold mt-1 uppercase">{employee.role}</p>
           </div>
         </div>
-        <button onClick={onLogout} className="p-4 text-red-500 bg-red-50 hover:bg-red-500 hover:text-white rounded-2xl transition-all active:scale-90"><LogOut size={22} /></button>
+        <button onClick={onLogout} className="p-4 text-red-500 bg-red-50 hover:bg-red-500 hover:text-white rounded-2xl transition-all active:scale-90 shadow-sm"><LogOut size={22} /></button>
       </header>
 
       <main className="flex-1 p-6 max-w-lg mx-auto w-full">
         {activeTab === 'attendance' && (
           <div className="space-y-8 animate-in fade-in duration-700">
-            <div className="bg-slate-900 p-10 rounded-[4rem] shadow-2xl border-4 border-slate-800 relative overflow-hidden">
-               <div className="absolute -top-10 -right-10 w-40 h-40 bg-blue-600/10 blur-[80px] rounded-full" />
+            <div className="bg-slate-900 p-8 rounded-[3.5rem] shadow-2xl border-4 border-slate-800 relative overflow-hidden">
                <div className="flex justify-between items-center mb-10 relative z-10">
                   <div className="flex items-center gap-3">
                      <div className={`w-3 h-3 rounded-full animate-pulse shadow-lg ${currentStatus === 'IN' ? 'bg-emerald-500 shadow-emerald-500/50' : 'bg-red-500 shadow-red-500/50'}`} />
@@ -90,103 +116,157 @@ const WorkerDashboard: React.FC<WorkerDashboardProps> = ({
                   <button 
                     onClick={() => handleAttendanceClick('IN')}
                     disabled={currentStatus === 'IN'}
-                    className={`p-10 rounded-[3rem] flex items-center justify-between transition-all active:scale-95 ${currentStatus === 'IN' ? 'bg-slate-800/50 opacity-30 cursor-not-allowed grayscale' : 'bg-emerald-600 hover:bg-emerald-500 shadow-2xl shadow-emerald-900/20 text-white'}`}
+                    className={`p-10 rounded-[3rem] flex items-center justify-between transition-all active:scale-95 ${currentStatus === 'IN' ? 'bg-slate-800/50 opacity-30 cursor-not-allowed grayscale' : 'bg-emerald-600 hover:bg-emerald-500 shadow-2xl text-white'}`}
                   >
-                     <div className="text-right">
-                        <span className="text-[8px] font-black opacity-60 uppercase tracking-widest block mb-1">Shift Start</span>
-                        <span className="text-2xl font-black">تسجيل دخول</span>
-                     </div>
-                     <div className="w-16 h-16 bg-white/20 rounded-3xl flex items-center justify-center backdrop-blur-md"><Zap size={32}/></div>
+                     <span className="text-2xl font-black text-right">تسجيل دخول</span>
+                     <Zap size={32}/>
                   </button>
 
                   <button 
                     onClick={() => handleAttendanceClick('OUT')}
                     disabled={currentStatus === 'OUT'}
-                    className={`p-10 rounded-[3rem] flex items-center justify-between transition-all active:scale-95 ${currentStatus === 'OUT' ? 'bg-slate-800/50 opacity-30 cursor-not-allowed grayscale' : 'bg-red-600 hover:bg-red-500 shadow-2xl shadow-red-900/20 text-white'}`}
+                    className={`p-10 rounded-[3rem] flex items-center justify-between transition-all active:scale-95 ${currentStatus === 'OUT' ? 'bg-slate-800/50 opacity-30 cursor-not-allowed grayscale' : 'bg-red-600 hover:bg-red-500 shadow-2xl text-white'}`}
                   >
-                     <div className="text-right">
-                        <span className="text-[8px] font-black opacity-60 uppercase tracking-widest block mb-1">Shift End</span>
-                        <span className="text-2xl font-black">تسجيل انصراف</span>
-                     </div>
-                     <div className="w-16 h-16 bg-white/20 rounded-3xl flex items-center justify-center backdrop-blur-md"><LogOut size={32}/></div>
+                     <span className="text-2xl font-black text-right">تسجيل انصراف</span>
+                     <LogOut size={32}/>
                   </button>
-               </div>
-
-               <div className="mt-10 flex justify-center items-center gap-8 text-slate-500 relative z-10">
-                  <div className="flex items-center gap-2"><Clock size={16} /><span className="text-[10px] font-black">{new Date().toLocaleTimeString('ar-EG')}</span></div>
-                  <div className="w-1.5 h-1.5 bg-slate-800 rounded-full" />
-                  <div className="flex items-center gap-2"><Activity size={16} /><span className="text-[10px] font-black uppercase">GPS Lock Active</span></div>
                </div>
             </div>
 
-            <div className="grid grid-cols-2 gap-4">
-              <div className="bg-white p-6 rounded-[2.5rem] border shadow-sm">
-                <p className="text-[9px] font-black text-slate-400 uppercase mb-2">الوردية المحددة</p>
-                <div className="text-xs font-black text-slate-800">{employee.shiftStart || '08:00'} - {employee.shiftEnd || '16:00'}</div>
-              </div>
-              <div className="bg-white p-6 rounded-[2.5rem] border shadow-sm">
-                <p className="text-[9px] font-black text-slate-400 uppercase mb-2">موقع العمل</p>
-                <div className="text-xs font-black text-blue-600 truncate">{employee.workplace || 'الموقع العام'}</div>
-              </div>
+            <div className="bg-white p-6 rounded-[2.5rem] border border-slate-100 shadow-sm space-y-4">
+                <h3 className="font-black text-[10px] text-slate-400 uppercase tracking-widest">موقع العمل الحالي</h3>
+                <div className="flex items-center gap-4 bg-slate-50 p-4 rounded-3xl">
+                    <Navigation className="text-blue-600" size={20} />
+                    <p className="text-sm font-bold text-slate-700">{employee.workplace || 'لم يتم تحديد موقع'}</p>
+                </div>
             </div>
           </div>
         )}
 
-        {/* باقي التبويبات كـ Placeholder */}
-        {activeTab !== 'attendance' && (
-          <div className="flex flex-col items-center justify-center py-20 opacity-30">
-            <Loader2 className="animate-spin mb-4" />
-            <p className="text-[10px] font-black uppercase">جاري التحميل...</p>
+        {activeTab === 'reports' && (
+          <div className="space-y-6 animate-in slide-in-from-bottom-4 duration-500">
+             <div className="bg-white p-8 rounded-[3rem] shadow-sm border border-slate-100">
+                <h3 className="text-xl font-black text-slate-800 mb-6">تقديم تقرير ميداني</h3>
+                <textarea 
+                  className="w-full h-40 bg-slate-50 rounded-3xl p-6 text-sm font-bold outline-none focus:ring-2 focus:ring-blue-500 transition-all mb-4 resize-none"
+                  placeholder="اكتب تفاصيل التقرير أو حالة الموقع هنا..."
+                  value={reportContent}
+                  onChange={(e) => setReportContent(e.target.value)}
+                />
+                <button 
+                  onClick={handleSendReport}
+                  className="w-full bg-slate-900 text-white py-4 rounded-2xl font-black flex items-center justify-center gap-2 shadow-lg"
+                >
+                  <Send size={18} /> إرسال التقرير
+                </button>
+             </div>
+          </div>
+        )}
+
+        {activeTab === 'chat' && (
+          <div className="h-[65vh] flex flex-col bg-white rounded-[3rem] shadow-sm border border-slate-100 overflow-hidden animate-in fade-in duration-500">
+              <div className="bg-slate-900 p-4 text-white text-center font-black text-xs uppercase tracking-widest">غرفة المحادثة</div>
+              <div className="flex-1 overflow-y-auto p-6 space-y-4 bg-slate-50/50">
+                  {chatMessages.map(msg => (
+                    <div key={msg.id} className={`flex flex-col ${msg.senderId === employee.id ? 'items-start' : 'items-end'}`}>
+                        <div className={`max-w-[80%] p-4 rounded-3xl text-sm font-bold ${msg.senderId === employee.id ? 'bg-blue-600 text-white rounded-tr-none' : 'bg-white text-slate-800 rounded-tl-none shadow-sm'}`}>
+                            <p className="text-[9px] opacity-60 mb-1">{msg.senderName}</p>
+                            {msg.text}
+                        </div>
+                        <span className="text-[8px] text-slate-400 mt-1 font-black">{msg.timestamp}</span>
+                    </div>
+                  ))}
+              </div>
+              <div className="p-4 bg-white border-t flex gap-2">
+                  <input 
+                    type="text" 
+                    className="flex-1 bg-slate-100 rounded-2xl px-4 text-sm font-bold outline-none focus:bg-white focus:ring-1 focus:ring-blue-500 transition-all"
+                    placeholder="اكتب رسالة..."
+                    value={chatInput}
+                    onChange={(e) => setChatInput(e.target.value)}
+                    onKeyPress={(e) => e.key === 'Enter' && handleSendChat()}
+                  />
+                  <button onClick={handleSendChat} className="p-4 bg-blue-600 text-white rounded-2xl shadow-md active:scale-90 transition-all"><Plus size={20}/></button>
+              </div>
+          </div>
+        )}
+
+        {activeTab === 'id' && (
+          <div className="space-y-6 animate-in zoom-in-95 duration-500">
+             <div className="bg-gradient-to-br from-slate-900 to-blue-900 p-8 rounded-[4rem] text-white shadow-2xl relative overflow-hidden">
+                <div className="absolute top-0 right-0 w-40 h-40 bg-white/5 rounded-full -mr-20 -mt-20 blur-3xl" />
+                <div className="relative z-10 flex flex-col items-center text-center">
+                    <div className="w-28 h-28 rounded-[2.5rem] border-4 border-white/20 p-1 mb-6 shadow-xl overflow-hidden">
+                        <img src={employee.avatar || `https://i.pravatar.cc/150?u=${employee.id}`} className="w-full h-full object-cover rounded-[2rem]" />
+                    </div>
+                    <h2 className="text-xl font-black mb-1">{employee.name}</h2>
+                    <p className="text-blue-300 font-bold text-xs uppercase tracking-widest mb-6">{employee.role}</p>
+                    
+                    <div className="w-full space-y-3 bg-white/5 p-6 rounded-[2.5rem] border border-white/10">
+                        <div className="flex justify-between items-center text-[10px] font-black uppercase">
+                            <span className="text-white/40">المعرف الرقمي</span>
+                            <span>{employee.id}</span>
+                        </div>
+                        <div className="flex justify-between items-center text-[10px] font-black uppercase">
+                            <span className="text-white/40">تاريخ الانضمام</span>
+                            <span>{employee.joinedAt || '2024'}</span>
+                        </div>
+                    </div>
+
+                    <div className="mt-8 pt-6 border-t border-white/10 w-full flex items-center justify-center gap-2">
+                        <CheckCircle2 size={16} className="text-emerald-400" />
+                        <span className="text-[10px] font-black uppercase tracking-[0.2em] text-emerald-400">بطاقة هوية معتمدة</span>
+                    </div>
+                </div>
+             </div>
           </div>
         )}
       </main>
 
-      <nav className="fixed bottom-0 left-0 w-full bg-white border-t p-5 flex justify-around items-center z-40 pb-12 rounded-t-[4rem] shadow-[0_-20px_60px_rgba(0,0,0,0.05)]">
+      <nav className="fixed bottom-0 left-0 w-full bg-white border-t p-4 flex justify-around items-center z-40 pb-10 rounded-t-[3.5rem] shadow-[0_-10px_40px_rgba(0,0,0,0.05)]">
         {[
           { id: 'attendance', icon: Clock, label: 'الرئيسية' },
           { id: 'reports', icon: FileText, label: 'التقارير' },
           { id: 'chat', icon: MessageSquare, label: 'الدردشة' },
           { id: 'id', icon: User, label: 'هويتي' }
         ].map(item => (
-          <button key={item.id} onClick={() => setActiveTab(item.id as any)} className={`flex flex-col items-center gap-2 p-3 rounded-2xl transition-all ${activeTab === item.id ? 'text-blue-600 bg-blue-50' : 'text-slate-400'}`}>
+          <button 
+            key={item.id} 
+            onClick={() => setActiveTab(item.id as any)} 
+            className={`flex flex-col items-center gap-1.5 p-3 rounded-2xl transition-all ${activeTab === item.id ? 'text-blue-600 bg-blue-50 scale-110 shadow-sm' : 'text-slate-400 hover:text-slate-600'}`}
+          >
             <item.icon size={22} strokeWidth={activeTab === item.id ? 3 : 2} />
-            <span className="text-[8px] font-black uppercase tracking-widest">{item.label}</span>
           </button>
         ))}
       </nav>
 
-      {showCamera && <CameraView onCapture={async (photo) => {
+      {showCamera && <CameraView onCapture={async (capturedPhoto) => {
          setShowCamera(false);
-         if (cameraMode === 'attendance') {
-            setIsProcessing(true);
+         setIsProcessing(true);
+         
+         navigator.geolocation.getCurrentPosition(async (pos) => {
+            const newLog: LogEntry = { 
+              id: `log_${Date.now()}_${employee.id}`,
+              employeeId: employee.id,
+              name: employee.name,
+              timestamp: new Date().toLocaleTimeString('ar-EG', { hour: '2-digit', minute: '2-digit' }),
+              type: isCapturing!,
+              photos: capturedPhoto, 
+              location: { lat: pos.coords.latitude, lng: pos.coords.longitude },
+              status: AttendanceStatus.PRESENT,
+              departmentId: employee.departmentId 
+            };
             
-            const geoOptions = { enableHighAccuracy: true, timeout: 15000, maximumAge: 0 };
-            
-            navigator.geolocation.getCurrentPosition(async (pos) => {
-               const newLog: LogEntry = { 
-                 id: `log_${Date.now()}`,
-                 employeeId: employee.id,
-                 name: employee.name,
-                 timestamp: new Date().toLocaleTimeString('ar-EG'),
-                 type: isCapturing!,
-                 photo,
-                 location: { lat: pos.coords.latitude, lng: pos.coords.longitude },
-                 status: AttendanceStatus.PRESENT,
-                 departmentId: employee.departmentId 
-               };
-               
-               await onNewLog(newLog);
-               setCurrentStatus(isCapturing!);
-               localStorage.setItem(`status_v12_${employee.id}`, isCapturing!);
-               setIsProcessing(false);
-               setIsCapturing(null);
-               alert('تم توثيق حضورك بنجاح!');
-            }, (err) => {
-               setIsProcessing(false);
-               setIsCapturing(null);
-               alert('فشل جلب الموقع الجغرافي. يرجى تفعيل الـ GPS وإعطاء الإذن للمتصفح.');
-            }, geoOptions);
-         }
+            await onNewLog(newLog);
+            setCurrentStatus(isCapturing!);
+            localStorage.setItem(`status_v12_${employee.id}`, isCapturing!);
+            setIsProcessing(false);
+            setIsCapturing(null);
+         }, (err) => {
+            setIsProcessing(false);
+            setIsCapturing(null);
+            alert('يرجى تفعيل نظام تحديد المواقع (GPS) للمتابعة');
+         }, { enableHighAccuracy: true });
       }} onCancel={() => { setShowCamera(false); setIsCapturing(null); }} />}
     </div>
   );
