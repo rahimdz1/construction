@@ -1,7 +1,7 @@
 
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { Employee, LogEntry, ReportEntry, ChatMessage, FileEntry, Announcement, Language, Department, CompanyConfig, AttendanceStatus } from './types';
-import { MOCK_EMPLOYEES, ADMIN_PIN, DEPARTMENTS as INITIAL_DEPARTMENTS, TRANSLATIONS, MOCK_REPORTS, MOCK_CHATS } from './constants';
+import { MOCK_EMPLOYEES, ADMIN_PIN, DEPARTMENTS as INITIAL_DEPARTMENTS, TRANSLATIONS, MOCK_REPORTS, MOCK_CHATS, NOTIFICATION_SOUNDS } from './constants';
 import WorkerDashboard from './components/WorkerDashboard';
 import AdminDashboard from './components/AdminDashboard';
 import { ShieldCheck, Loader2 } from 'lucide-react';
@@ -27,34 +27,87 @@ const App: React.FC = () => {
   const [foundPreRegisteredEmployee, setFoundPreRegisteredEmployee] = useState<Employee | null>(null);
   const [regPassword, setRegPassword] = useState('');
 
+  // مرجع لحالة المستخدم الحالية لاستخدامه داخل اشتراكات Realtime
+  const currentUserRef = useRef<Employee | 'ADMIN' | null>(null);
+  useEffect(() => {
+    currentUserRef.current = currentUser;
+  }, [currentUser]);
+
   const t = TRANSLATIONS[lang];
 
-  // 1. استعادة الجلسة عند تحميل التطبيق
+  // 1. استعادة الجلسة والبيانات الأولية
   useEffect(() => {
-    const savedUser = localStorage.getItem('construction_user');
-    if (savedUser) {
-      try {
-        const parsed = JSON.parse(savedUser);
-        setCurrentUser(parsed);
-      } catch (e) {
-        localStorage.removeItem('construction_user');
+    const init = async () => {
+      const savedUser = localStorage.getItem('construction_user');
+      if (savedUser) {
+        try {
+          const parsed = JSON.parse(savedUser);
+          setCurrentUser(parsed);
+        } catch (e) {
+          localStorage.removeItem('construction_user');
+        }
       }
-    }
-    fetchInitialData();
+      await fetchInitialData();
+      setLoading(false);
+    };
+    init();
 
-    // إعداد تحديث تلقائي للبيانات كل 30 ثانية لضمان تزامن الإدارة
-    const interval = setInterval(fetchInitialData, 30000);
-    return () => clearInterval(interval);
+    // إعداد اشتراكات Realtime للتنبيهات الفورية
+    const channel = supabase
+      .channel('db-changes')
+      .on(
+        'postgres_changes',
+        { event: 'INSERT', schema: 'public', table: 'attendance_logs' },
+        (payload) => {
+          const newLog = {
+            ...payload.new,
+            location: { lat: payload.new.location_lat, lng: payload.new.location_lng }
+          } as LogEntry;
+          
+          setLogs(prev => {
+            if (prev.find(l => l.id === newLog.id)) return prev;
+            // إذا كان المستخدم الحالي مدير، قم بتشغيل صوت التنبيه
+            if (currentUserRef.current === 'ADMIN') {
+              const audio = new Audio(NOTIFICATION_SOUNDS.MESSAGE);
+              audio.play().catch(e => console.log("Audio play blocked by browser", e));
+            }
+            return [newLog, ...prev];
+          });
+        }
+      )
+      .on(
+        'postgres_changes',
+        { event: 'INSERT', schema: 'public', table: 'reports' },
+        (payload) => {
+          setReports(prev => [payload.new as ReportEntry, ...prev]);
+          if (currentUserRef.current === 'ADMIN') {
+            const audio = new Audio(NOTIFICATION_SOUNDS.REPORT);
+            audio.play().catch(e => console.log("Audio play blocked", e));
+          }
+        }
+      )
+      .on(
+        'postgres_changes',
+        { event: 'INSERT', schema: 'public', table: 'chat_messages' },
+        (payload) => {
+          setMessages(prev => [...prev, payload.new as ChatMessage]);
+        }
+      )
+      .subscribe();
+
+    return () => {
+      supabase.removeChannel(channel);
+    };
   }, []);
 
-  // 2. حفظ الجلسة عند تغيير المستخدم
+  // 2. حفظ الجلسة عند كل تغيير
   useEffect(() => {
     if (currentUser) {
       localStorage.setItem('construction_user', JSON.stringify(currentUser));
-    } else {
+    } else if (!loading) {
       localStorage.removeItem('construction_user');
     }
-  }, [currentUser]);
+  }, [currentUser, loading]);
 
   const fetchInitialData = async () => {
     try {
@@ -67,34 +120,21 @@ const App: React.FC = () => {
       const { data: anns } = await supabase.from('announcements').select('*');
       const { data: config } = await supabase.from('company_config').select('*').maybeSingle();
 
-      if (emps && emps.length) setEmployees(emps);
-      else setEmployees(MOCK_EMPLOYEES);
-
-      if (depts && depts.length) setDepartments(depts);
-      else setDepartments(INITIAL_DEPARTMENTS);
-
-      if (repts && repts.length) setReports(repts);
-      else setReports(MOCK_REPORTS);
-
-      if (msgs && msgs.length) setMessages(msgs);
-      else setMessages(MOCK_CHATS);
-
-      setFiles(fls || []);
-      setAnnouncements(anns || []);
-
+      if (emps) setEmployees(emps.length ? emps : MOCK_EMPLOYEES);
+      if (depts) setDepartments(depts.length ? depts : INITIAL_DEPARTMENTS);
+      if (repts) setReports(repts.length ? repts : MOCK_REPORTS);
+      if (msgs) setMessages(msgs.length ? msgs : MOCK_CHATS);
+      if (fls) setFiles(fls);
+      if (anns) setAnnouncements(anns);
       if (attLogs) {
         setLogs(attLogs.map((l: any) => ({
           ...l,
           location: { lat: l.location_lat, lng: l.location_lng }
         })));
       }
-      
       if (config) setCompanyConfig({ name: config.name, logo: config.logo });
-
     } catch (err) {
       console.error("Fetch Error:", err);
-    } finally {
-      setLoading(false);
     }
   };
 
@@ -130,6 +170,11 @@ const App: React.FC = () => {
     }
   };
 
+  const handleLogout = () => {
+    setCurrentUser(null);
+    localStorage.removeItem('construction_user');
+  };
+
   const handleStartActivation = () => {
     setError(null);
     if (!phoneInput) return;
@@ -152,11 +197,11 @@ const App: React.FC = () => {
     setIsRegistering(false);
   };
 
-  if (loading && !currentUser) {
+  if (loading) {
     return (
       <div className="min-h-screen bg-slate-900 flex flex-col items-center justify-center text-white gap-6">
         <Loader2 className="animate-spin text-blue-500" size={64} />
-        <p className="font-bold text-xl animate-pulse">جاري تحميل البيانات...</p>
+        <p className="font-bold text-xl animate-pulse font-['Cairo']">جاري تهيئة المنظومة...</p>
       </div>
     );
   }
@@ -172,7 +217,7 @@ const App: React.FC = () => {
           setMessages(prev => [...prev, m]); 
           await supabase.from('chat_messages').insert(m);
         }} 
-        onLogout={() => setCurrentUser(null)} 
+        onLogout={handleLogout} 
         onUpdateEmployees={handleUpdateEmployees}
         onUpdateDepartments={handleUpdateDepartments}
         onUpdateAnnouncements={async (a) => { 
@@ -198,11 +243,9 @@ const App: React.FC = () => {
           setMessages(prev => [...prev, m]); 
           await supabase.from('chat_messages').insert(m);
         }} 
-        onLogout={() => setCurrentUser(null)} 
+        onLogout={handleLogout} 
         onNewLog={async (newLog) => { 
-          // تحديث الحالة المحلية فوراً ليراها العامل
           setLogs(prev => [newLog, ...prev]); 
-          // الإرسال لقاعدة البيانات
           const { error } = await supabase.from('attendance_logs').insert({
             id: newLog.id,
             employeeId: newLog.employeeId,
@@ -215,41 +258,40 @@ const App: React.FC = () => {
             status: newLog.status,
             departmentId: newLog.departmentId
           });
-          if (error) console.error("Sync Log Error:", error);
-          else fetchInitialData(); // إعادة الجلب للتأكد من المزامنة
+          if (error) console.error("Log Sync Error:", error);
         }} 
         onNewReport={async (r) => { 
           setReports(prev => [r, ...prev]); 
           const { error } = await supabase.from('reports').insert(r);
-          if (error) console.error("Sync Report Error:", error);
-          else fetchInitialData();
+          if (error) console.error("Report Sync Error:", error);
         }}
       />
     );
   }
 
   return (
-    <div className={`min-h-screen bg-slate-900 flex items-center justify-center p-4 ${lang === 'ar' ? 'rtl' : 'ltr'}`} dir={lang === 'ar' ? 'rtl' : 'ltr'}>
+    <div className={`min-h-screen bg-slate-900 flex items-center justify-center p-4 font-['Cairo']`} dir={lang === 'ar' ? 'rtl' : 'ltr'}>
       <div className="w-full max-w-md">
         <div className="text-center mb-10">
           <div className="inline-flex items-center justify-center w-24 h-24 bg-blue-600 rounded-3xl shadow-2xl mb-6">
             {companyConfig.logo ? <img src={companyConfig.logo} alt="Logo" className="w-full h-full object-contain" /> : <ShieldCheck size={48} className="text-white" />}
           </div>
           <h1 className="text-3xl font-bold text-white mb-2">{companyConfig.name}</h1>
-          <p className="text-slate-400 text-sm">نظام المتابعة الميدانية</p>
+          <p className="text-slate-400 text-sm">نظام المتابعة الميدانية الذكي</p>
         </div>
 
         <div className="bg-white/10 backdrop-blur-xl p-8 rounded-[2.5rem] border border-white/10 shadow-2xl text-white">
           {isRegistering ? (
             <form onSubmit={handleCompleteActivation} className="space-y-6">
               <p className="text-center font-bold text-emerald-400">مرحباً {foundPreRegisteredEmployee?.name}</p>
-              <input type="password" placeholder="كلمة مرور جديدة" className="w-full bg-white/5 border border-white/20 rounded-2xl py-4 px-4" value={regPassword} onChange={(e) => setRegPassword(e.target.value)} required />
-              <button type="submit" className="w-full bg-emerald-600 py-4 rounded-2xl font-bold">تفعيل الحساب</button>
+              <input type="password" placeholder="كلمة مرور جديدة" className="w-full bg-white/5 border border-white/20 rounded-2xl py-4 px-4 outline-none focus:ring-2 focus:ring-emerald-500" value={regPassword} onChange={(e) => setRegPassword(e.target.value)} required />
+              <button type="submit" className="w-full bg-emerald-600 py-4 rounded-2xl font-bold hover:bg-emerald-700 transition-all">تفعيل الحساب</button>
+              <button type="button" onClick={() => setIsRegistering(false)} className="w-full text-xs text-slate-400">العودة لتسجيل الدخول</button>
             </form>
           ) : (
             <form onSubmit={handleLogin} className="space-y-6">
               <input type="text" placeholder={t.phone} className="w-full bg-white/5 border border-white/20 rounded-2xl py-4 px-4 shadow-inner outline-none focus:ring-2 focus:ring-blue-500" value={phoneInput} onChange={(e) => setPhoneInput(e.target.value)} />
-              {phoneInput !== ADMIN_PIN && phoneInput !== '123' && (
+              {phoneInput !== ADMIN_PIN && (
                 <input type="password" placeholder={t.password} className="w-full bg-white/5 border border-white/20 rounded-2xl py-4 px-4 shadow-inner outline-none focus:ring-2 focus:ring-blue-500" value={passwordInput} onChange={(e) => setPasswordInput(e.target.value)} />
               )}
               {error && <p className="text-red-400 text-xs text-center font-bold animate-bounce">{error}</p>}
