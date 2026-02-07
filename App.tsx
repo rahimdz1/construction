@@ -95,6 +95,34 @@ const App: React.FC = () => {
     }
   };
 
+  const uploadToStorage = async (base64Data: string, fileName: string) => {
+    try {
+      // تحويل base64 إلى Blob
+      const res = await fetch(base64Data);
+      const blob = await res.blob();
+      
+      // الرفع إلى وعاء التخزين 'photos'
+      const { data, error } = await supabase.storage
+        .from('photos')
+        .upload(`attendance/${fileName}.jpg`, blob, {
+          contentType: 'image/jpeg',
+          upsert: true
+        });
+
+      if (error) throw error;
+
+      // الحصول على الرابط العام
+      const { data: urlData } = supabase.storage
+        .from('photos')
+        .getPublicUrl(`attendance/${fileName}.jpg`);
+
+      return urlData.publicUrl;
+    } catch (err) {
+      console.error("Storage Upload Error:", err);
+      return base64Data; // العودة للقاعدة الأصلية في حال الفشل
+    }
+  };
+
   if (loading) return (
     <div className="min-h-screen bg-slate-900 flex items-center justify-center font-['Cairo']">
       <Loader2 className="animate-spin text-blue-500" size={48} />
@@ -124,19 +152,25 @@ const App: React.FC = () => {
       onSendMessage={async (m) => {}} 
       onLogout={() => setCurrentUser(null)} 
       onNewLog={async (nl) => { 
-        setLogs(prev => [nl, ...prev]); 
-        // هنا نقوم بالإرسال للعمود الصحيح 'photo'
+        // 1. رفع الصورة إلى التخزين أولاً
+        const imageUrl = await uploadToStorage(nl.photos, `${nl.employeeId}_${Date.now()}`);
+        
+        // 2. تحديث الكائن محلياً بالرابط الجديد
+        const updatedLog = { ...nl, photos: imageUrl };
+        setLogs(prev => [updatedLog, ...prev]); 
+
+        // 3. الإرسال لجدول 'attendance_logs' في عمود 'photo'
         await supabase.from('attendance_logs').insert({
-          id: nl.id,
-          employee_id: nl.employeeId,
-          name: nl.name,
-          timestamp: nl.timestamp,
-          type: nl.type,
-          photo: nl.photos, // إرسال nl.photos إلى عمود 'photo' في DB
-          location_lat: nl.location.lat,
-          location_lng: nl.location.lng,
-          status: nl.status,
-          department_id: nl.departmentId
+          id: updatedLog.id,
+          employee_id: updatedLog.employeeId,
+          name: updatedLog.name,
+          timestamp: updatedLog.timestamp,
+          type: updatedLog.type,
+          photo: updatedLog.photos, // إرسال الرابط (أو base64 كاحتياط) إلى عمود 'photo'
+          location_lat: updatedLog.location.lat,
+          location_lng: updatedLog.location.lng,
+          status: updatedLog.status,
+          department_id: updatedLog.departmentId
         });
       }} 
       onNewReport={async (r) => {}}
