@@ -24,11 +24,8 @@ const App: React.FC = () => {
   const [companyConfig, setCompanyConfig] = useState<CompanyConfig>({ name: 'نظام المقاولات الذكي', logo: '' });
   const [loading, setLoading] = useState(true);
 
-  // مرجع للحالة الحالية لاستخدامه في الاشتراكات اللحظية
   const currentUserRef = useRef<Employee | 'ADMIN' | null>(null);
   useEffect(() => { currentUserRef.current = currentUser; }, [currentUser]);
-
-  const t = TRANSLATIONS[lang];
 
   const fetchInitialData = async () => {
     try {
@@ -46,7 +43,7 @@ const App: React.FC = () => {
         supabase.from('departments').select('*'),
         supabase.from('attendance_logs').select('*').order('created_at', { ascending: false }),
         supabase.from('reports').select('*').order('timestamp', { ascending: false }),
-        supabase.from('chat_messages').select('*').order('timestamp', { ascending: true }),
+        supabase.from('chat_messages').select('*').order('created_at', { ascending: true }),
         supabase.from('files').select('*'),
         supabase.from('announcements').select('*'),
         supabase.from('company_config').select('*').maybeSingle()
@@ -58,6 +55,7 @@ const App: React.FC = () => {
       setMessages(msgs && msgs.length ? msgs : MOCK_CHATS);
       setFiles(fls || []);
       setAnnouncements(anns || []);
+      
       if (attLogs) {
         setLogs(attLogs.map((l: any) => ({
           ...l,
@@ -72,38 +70,32 @@ const App: React.FC = () => {
 
   useEffect(() => {
     const init = async () => {
-      // 1. استرجاع الجلسة فوراً لمنع الخروج
-      const saved = localStorage.getItem('construction_session_v2');
+      const saved = localStorage.getItem('construction_v8_session');
       if (saved && saved !== 'null') {
-        try {
-          setCurrentUser(JSON.parse(saved));
-        } catch (e) {
-          localStorage.removeItem('construction_session_v2');
-        }
+        try { setCurrentUser(JSON.parse(saved)); } catch (e) { localStorage.removeItem('construction_v8_session'); }
       }
-      
       await fetchInitialData();
       setLoading(false);
     };
-
     init();
 
-    // 2. تفعيل التنبيهات اللحظية
+    // البث اللحظي (Realtime)
     const channel = supabase
-      .channel('system-realtime')
+      .channel('schema-db-changes')
       .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'attendance_logs' }, (payload) => {
-        const newLog = {
-          ...payload.new,
-          location: { lat: payload.new.location_lat, lng: payload.new.location_lng }
+        const raw = payload.new;
+        const newLog: LogEntry = {
+          ...raw,
+          location: { lat: raw.location_lat, lng: raw.location_lng }
         } as LogEntry;
         
         setLogs(prev => {
           if (prev.some(l => l.id === newLog.id)) return prev;
           if (currentUserRef.current === 'ADMIN') {
-            const sound = new Audio(newLog.type === 'IN' 
+            const audio = new Audio(newLog.type === 'IN' 
               ? 'https://assets.mixkit.co/active_storage/sfx/2358/2358-preview.mp3' 
               : 'https://assets.mixkit.co/active_storage/sfx/2354/2354-preview.mp3');
-            sound.play().catch(() => {});
+            audio.play().catch(() => {});
           }
           return [newLog, ...prev];
         });
@@ -122,11 +114,10 @@ const App: React.FC = () => {
     return () => { supabase.removeChannel(channel); };
   }, []);
 
-  // حفظ الجلسة
   useEffect(() => {
     if (!loading) {
-      if (currentUser) localStorage.setItem('construction_session_v2', JSON.stringify(currentUser));
-      else localStorage.removeItem('construction_session_v2');
+      if (currentUser) localStorage.setItem('construction_v8_session', JSON.stringify(currentUser));
+      else localStorage.removeItem('construction_v8_session');
     }
   }, [currentUser, loading]);
 
@@ -140,20 +131,20 @@ const App: React.FC = () => {
     if (emp && (emp.password === passwordInput || phoneInput === '123')) {
       setCurrentUser(emp);
     } else {
-      setError(t.wrongPassword);
+      setError(TRANSLATIONS[lang].wrongPassword);
     }
   };
 
   const handleLogout = () => {
     setCurrentUser(null);
-    localStorage.removeItem('construction_session_v2');
+    localStorage.removeItem('construction_v8_session');
   };
 
   if (loading) {
     return (
       <div className="min-h-screen bg-slate-900 flex flex-col items-center justify-center text-white font-['Cairo']">
-        <Loader2 className="animate-spin text-blue-500 mb-4" size={50} />
-        <p className="animate-pulse">جاري التحقق من الهوية...</p>
+        <Loader2 className="animate-spin text-blue-500 mb-4" size={54} />
+        <p className="animate-pulse font-bold tracking-widest text-xs uppercase">تحديث السحابة الميدانية...</p>
       </div>
     );
   }
@@ -165,7 +156,7 @@ const App: React.FC = () => {
         employees={employees} departments={departments}
         companyConfig={companyConfig}
         lang={lang} onSetLang={setLang}
-        onSendMessage={async (m) => { setMessages(prev => [...prev, m]); await supabase.from('chat_messages').insert(m); }} 
+        onSendMessage={async (m) => { await supabase.from('chat_messages').insert(m); }} 
         onLogout={handleLogout} 
         onUpdateEmployees={async (upd) => { setEmployees(upd); await supabase.from('employees').upsert(upd); }}
         onUpdateDepartments={async (upd) => { setDepartments(upd); await supabase.from('departments').upsert(upd); }}
@@ -185,17 +176,28 @@ const App: React.FC = () => {
         employee={currentUser as Employee} chatMessages={messages} departmentFiles={files} 
         announcements={announcements} companyConfig={companyConfig}
         lang={lang} onSetLang={setLang}
-        onSendMessage={async (m) => { setMessages(prev => [...prev, m]); await supabase.from('chat_messages').insert(m); }} 
+        onSendMessage={async (m) => { await supabase.from('chat_messages').insert(m); }} 
         onLogout={handleLogout} 
         onNewLog={async (nl) => { 
           setLogs(prev => [nl, ...prev]); 
-          await supabase.from('attendance_logs').insert({
-            id: nl.id, employeeId: nl.employeeId, name: nl.name, timestamp: nl.timestamp,
-            type: nl.type, photo: nl.photo, location_lat: nl.location.lat, 
-            location_lng: nl.location.lng, status: nl.status, departmentId: nl.departmentId
+          const { error: dbError } = await supabase.from('attendance_logs').insert({
+            id: nl.id, 
+            employeeId: nl.employeeId, 
+            name: nl.name, 
+            timestamp: nl.timestamp,
+            type: nl.type, 
+            photo: nl.photo, 
+            location_lat: nl.location.lat, 
+            location_lng: nl.location.lng, 
+            status: nl.status, 
+            departmentId: nl.departmentId
           });
+          if (dbError) console.error("Save failed:", dbError.message);
         }} 
-        onNewReport={async (r) => { setReports(prev => [r, ...prev]); await supabase.from('reports').insert(r); }}
+        onNewReport={async (r) => { 
+          setReports(prev => [r, ...prev]); 
+          await supabase.from('reports').insert(r); 
+        }}
       />
     );
   }
@@ -203,19 +205,19 @@ const App: React.FC = () => {
   return (
     <div className="min-h-screen bg-slate-900 flex items-center justify-center p-4 font-['Cairo']" dir="rtl">
       <div className="w-full max-w-md">
-        <div className="text-center mb-10">
-          <div className="w-24 h-24 bg-blue-600 rounded-[2rem] shadow-2xl mx-auto mb-6 flex items-center justify-center overflow-hidden">
-            {companyConfig.logo ? <img src={companyConfig.logo} className="w-full h-full object-cover" /> : <ShieldCheck size={48} className="text-white" />}
+        <div className="text-center mb-10 text-white">
+          <div className="w-24 h-24 bg-blue-600 rounded-[2.5rem] shadow-2xl mx-auto mb-6 flex items-center justify-center overflow-hidden border-4 border-white/10">
+            {companyConfig.logo ? <img src={companyConfig.logo} className="w-full h-full object-cover" /> : <ShieldCheck size={48} />}
           </div>
-          <h1 className="text-3xl font-bold text-white mb-2">{companyConfig.name}</h1>
-          <p className="text-slate-400 text-sm">نظام المتابعة الميدانية الذكي</p>
+          <h1 className="text-3xl font-bold mb-2">{companyConfig.name}</h1>
+          <p className="text-slate-400 text-sm tracking-widest font-bold uppercase">Field Ops Center</p>
         </div>
-        <div className="bg-white/10 backdrop-blur-xl p-8 rounded-[2.5rem] border border-white/10 shadow-2xl">
+        <div className="bg-white/10 backdrop-blur-xl p-8 rounded-[3rem] border border-white/10 shadow-2xl">
           <form onSubmit={handleLogin} className="space-y-6 text-white">
-            <input type="text" placeholder="رقم الهاتف أو كود المسؤول" className="w-full bg-white/5 border border-white/20 rounded-2xl py-4 px-4 text-center font-bold outline-none focus:ring-2 focus:ring-blue-500" value={phoneInput} onChange={(e) => setPhoneInput(e.target.value)} />
-            {phoneInput !== ADMIN_PIN && <input type="password" placeholder="كلمة المرور" className="w-full bg-white/5 border border-white/20 rounded-2xl py-4 px-4 text-center font-bold outline-none focus:ring-2 focus:ring-blue-500" value={passwordInput} onChange={(e) => setPasswordInput(e.target.value)} />}
+            <input type="text" placeholder="رقم الهاتف" className="w-full bg-white/5 border border-white/20 rounded-2xl py-4 px-4 text-center font-bold outline-none focus:ring-2 focus:ring-blue-500 shadow-inner transition-all" value={phoneInput} onChange={(e) => setPhoneInput(e.target.value)} />
+            {phoneInput !== ADMIN_PIN && <input type="password" placeholder="كلمة المرور" className="w-full bg-white/5 border border-white/20 rounded-2xl py-4 px-4 text-center font-bold outline-none focus:ring-2 focus:ring-blue-500 shadow-inner transition-all" value={passwordInput} onChange={(e) => setPasswordInput(e.target.value)} />}
             {error && <p className="text-red-400 text-xs text-center font-bold">{error}</p>}
-            <button type="submit" className="w-full bg-blue-600 py-4 rounded-2xl font-bold shadow-lg hover:bg-blue-700 transition-all text-lg">دخول النظام</button>
+            <button type="submit" className="w-full bg-blue-600 py-5 rounded-2xl font-black shadow-lg hover:bg-blue-700 transition-all active:scale-95 text-lg uppercase">دخول النظام</button>
           </form>
         </div>
       </div>
