@@ -23,10 +23,8 @@ const App: React.FC = () => {
   const [announcements, setAnnouncements] = useState<Announcement[]>([]);
   const [companyConfig, setCompanyConfig] = useState<CompanyConfig>({ name: 'نظام المقاولات الذكي', logo: '' });
   const [loading, setLoading] = useState(true);
-  const [isRegistering, setIsRegistering] = useState(false);
-  const [foundPreRegisteredEmployee, setFoundPreRegisteredEmployee] = useState<Employee | null>(null);
-  const [regPassword, setRegPassword] = useState('');
 
+  // مرجع لحالة المستخدم الحالية لاستخدامه داخل اشتراكات Realtime لتجنب مشاكل الـ Closures
   const currentUserRef = useRef<Employee | 'ADMIN' | null>(null);
   useEffect(() => {
     currentUserRef.current = currentUser;
@@ -34,7 +32,7 @@ const App: React.FC = () => {
 
   const t = TRANSLATIONS[lang];
 
-  // دالة لجلب البيانات وتحديث الحالة
+  // دالة جلب البيانات الأساسية
   const fetchInitialData = async () => {
     try {
       const [
@@ -76,26 +74,27 @@ const App: React.FC = () => {
   };
 
   useEffect(() => {
-    const initSession = async () => {
-      // استعادة الجلسة أولاً وقبل أي شيء
-      const savedUser = localStorage.getItem('construction_user');
-      if (savedUser && savedUser !== 'null') {
+    const init = async () => {
+      // 1. استرجاع الجلسة فوراً
+      const savedUser = localStorage.getItem('construction_user_session');
+      if (savedUser && savedUser !== 'undefined') {
         try {
-          const parsed = JSON.parse(savedUser);
-          setCurrentUser(parsed);
+          setCurrentUser(JSON.parse(savedUser));
         } catch (e) {
-          localStorage.removeItem('construction_user');
+          localStorage.removeItem('construction_user_session');
         }
       }
+      
+      // 2. جلب البيانات من السيرفر
       await fetchInitialData();
       setLoading(false);
     };
 
-    initSession();
+    init();
 
-    // إعداد قنوات التنبيه اللحظي
+    // 3. تفعيل نظام التنبيهات اللحظية (Realtime)
     const channel = supabase
-      .channel('realtime-updates')
+      .channel('public-events')
       .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'attendance_logs' }, (payload) => {
         const newLog = {
           ...payload.new,
@@ -103,16 +102,15 @@ const App: React.FC = () => {
         } as LogEntry;
         
         setLogs(prev => {
-          if (prev.find(l => l.id === newLog.id)) return prev;
+          if (prev.some(l => l.id === newLog.id)) return prev;
           
-          // تشغيل الصوت للمدير فقط
+          // تشغيل صوت التنبيه للمسؤول فقط
           if (currentUserRef.current === 'ADMIN') {
-            const soundUrl = newLog.type === 'IN' 
-              ? 'https://assets.mixkit.co/active_storage/sfx/2358/2358-preview.mp3' // صوت دخول
-              : 'https://assets.mixkit.co/active_storage/sfx/2354/2354-preview.mp3'; // صوت خروج
-            
-            const audio = new Audio(soundUrl);
-            audio.play().catch(e => console.log("Audio feedback:", e));
+            const sound = newLog.type === 'IN' 
+              ? 'https://assets.mixkit.co/active_storage/sfx/2358/2358-preview.mp3' 
+              : 'https://assets.mixkit.co/active_storage/sfx/2354/2354-preview.mp3';
+            const audio = new Audio(sound);
+            audio.play().catch(e => console.warn("Audio feedback blocked:", e));
           }
           return [newLog, ...prev];
         });
@@ -133,26 +131,16 @@ const App: React.FC = () => {
     };
   }, []);
 
-  // تحديث localStorage عند تغيير المستخدم
+  // حفظ الجلسة في localStorage عند أي تغيير
   useEffect(() => {
     if (!loading) {
       if (currentUser) {
-        localStorage.setItem('construction_user', JSON.stringify(currentUser));
+        localStorage.setItem('construction_user_session', JSON.stringify(currentUser));
       } else {
-        localStorage.removeItem('construction_user');
+        localStorage.removeItem('construction_user_session');
       }
     }
   }, [currentUser, loading]);
-
-  const handleUpdateEmployees = async (updated: Employee[]) => {
-    setEmployees(updated);
-    await supabase.from('employees').upsert(updated);
-  };
-
-  const handleUpdateDepartments = async (updated: Department[]) => {
-    setDepartments(updated);
-    await supabase.from('departments').upsert(updated);
-  };
 
   const handleLogin = (e?: React.FormEvent) => {
     e?.preventDefault();
@@ -172,20 +160,20 @@ const App: React.FC = () => {
         setError(t.wrongPassword);
       }
     } else {
-      setError(lang === 'ar' ? 'عفواً، هذا الرقم غير مسجل.' : 'Error: Phone not registered.');
+      setError(lang === 'ar' ? 'الرقم غير مسجل في المنظومة' : 'Phone not registered');
     }
   };
 
   const handleLogout = () => {
     setCurrentUser(null);
-    localStorage.removeItem('construction_user');
+    localStorage.removeItem('construction_user_session');
   };
 
   if (loading) {
     return (
       <div className="min-h-screen bg-slate-900 flex flex-col items-center justify-center text-white gap-6 font-['Cairo']">
-        <Loader2 className="animate-spin text-blue-500" size={64} />
-        <p className="font-bold text-xl animate-pulse">جاري تأمين الاتصال...</p>
+        <Loader2 className="animate-spin text-blue-500" size={60} />
+        <p className="font-bold text-lg animate-pulse">جاري التحقق من الجلسة...</p>
       </div>
     );
   }
@@ -202,12 +190,9 @@ const App: React.FC = () => {
           await supabase.from('chat_messages').insert(m);
         }} 
         onLogout={handleLogout} 
-        onUpdateEmployees={handleUpdateEmployees}
-        onUpdateDepartments={handleUpdateDepartments}
-        onUpdateAnnouncements={async (a) => { 
-          setAnnouncements(a); 
-          await supabase.from('announcements').upsert(a);
-        }}
+        onUpdateEmployees={async (updated) => { setEmployees(updated); await supabase.from('employees').upsert(updated); }}
+        onUpdateDepartments={async (updated) => { setDepartments(updated); await supabase.from('departments').upsert(updated); }}
+        onUpdateAnnouncements={async (a) => { setAnnouncements(a); await supabase.from('announcements').upsert(a); }}
         onUpdateFiles={async (f) => { setFiles(f); await supabase.from('files').upsert(f); }}
         onUpdateCompanyConfig={async (c) => {
           setCompanyConfig(c);
@@ -230,7 +215,7 @@ const App: React.FC = () => {
         onLogout={handleLogout} 
         onNewLog={async (newLog) => { 
           setLogs(prev => [newLog, ...prev]); 
-          const { error } = await supabase.from('attendance_logs').insert({
+          await supabase.from('attendance_logs').insert({
             id: newLog.id,
             employeeId: newLog.employeeId,
             name: newLog.name,
@@ -242,7 +227,6 @@ const App: React.FC = () => {
             status: newLog.status,
             departmentId: newLog.departmentId
           });
-          if (error) console.error("Sync Error:", error);
         }} 
         onNewReport={async (r) => { 
           setReports(prev => [r, ...prev]); 
@@ -253,24 +237,30 @@ const App: React.FC = () => {
   }
 
   return (
-    <div className={`min-h-screen bg-slate-900 flex items-center justify-center p-4 font-['Cairo']`} dir={lang === 'ar' ? 'rtl' : 'ltr'}>
+    <div className="min-h-screen bg-slate-900 flex items-center justify-center p-4 font-['Cairo']" dir="rtl">
       <div className="w-full max-w-md">
         <div className="text-center mb-10">
-          <div className="inline-flex items-center justify-center w-24 h-24 bg-blue-600 rounded-3xl shadow-2xl mb-6">
-            {companyConfig.logo ? <img src={companyConfig.logo} alt="Logo" className="w-full h-full object-contain" /> : <ShieldCheck size={48} className="text-white" />}
+          <div className="inline-flex items-center justify-center w-24 h-24 bg-blue-600 rounded-3xl shadow-2xl mb-6 overflow-hidden">
+            {companyConfig.logo ? <img src={companyConfig.logo} alt="Logo" className="w-full h-full object-cover" /> : <ShieldCheck size={48} className="text-white" />}
           </div>
           <h1 className="text-3xl font-bold text-white mb-2">{companyConfig.name}</h1>
-          <p className="text-slate-400 text-sm">نظام المتابعة الميدانية</p>
+          <p className="text-slate-400 text-sm">نظام المتابعة الميدانية والتحقق اللحظي</p>
         </div>
 
         <div className="bg-white/10 backdrop-blur-xl p-8 rounded-[2.5rem] border border-white/10 shadow-2xl text-white">
           <form onSubmit={handleLogin} className="space-y-6">
-            <input type="text" placeholder={t.phone} className="w-full bg-white/5 border border-white/20 rounded-2xl py-4 px-4 shadow-inner outline-none focus:ring-2 focus:ring-blue-500 text-center" value={phoneInput} onChange={(e) => setPhoneInput(e.target.value)} />
+            <div className="space-y-2">
+              <label className="text-[10px] font-black uppercase text-slate-400 mr-2 tracking-widest">Phone Number / Admin PIN</label>
+              <input type="text" placeholder="رقم الهاتف أو كود المسؤول" className="w-full bg-white/5 border border-white/20 rounded-2xl py-4 px-4 shadow-inner outline-none focus:ring-2 focus:ring-blue-500 text-center font-bold" value={phoneInput} onChange={(e) => setPhoneInput(e.target.value)} />
+            </div>
             {phoneInput !== ADMIN_PIN && (
-              <input type="password" placeholder={t.password} className="w-full bg-white/5 border border-white/20 rounded-2xl py-4 px-4 shadow-inner outline-none focus:ring-2 focus:ring-blue-500 text-center" value={passwordInput} onChange={(e) => setPasswordInput(e.target.value)} />
+              <div className="space-y-2">
+                <label className="text-[10px] font-black uppercase text-slate-400 mr-2 tracking-widest">Password</label>
+                <input type="password" placeholder="كلمة المرور" className="w-full bg-white/5 border border-white/20 rounded-2xl py-4 px-4 shadow-inner outline-none focus:ring-2 focus:ring-blue-500 text-center font-bold" value={passwordInput} onChange={(e) => setPasswordInput(e.target.value)} />
+              </div>
             )}
-            {error && <p className="text-red-400 text-xs text-center font-bold animate-bounce">{error}</p>}
-            <button type="submit" className="w-full bg-blue-600 py-4 rounded-2xl font-bold shadow-lg hover:bg-blue-700 transition-all active:scale-95">{t.login}</button>
+            {error && <p className="text-red-400 text-xs text-center font-bold animate-bounce bg-red-400/10 py-2 rounded-lg">{error}</p>}
+            <button type="submit" className="w-full bg-blue-600 py-4 rounded-2xl font-bold shadow-lg hover:bg-blue-700 transition-all active:scale-95 text-lg">دخول النظام</button>
           </form>
         </div>
       </div>
