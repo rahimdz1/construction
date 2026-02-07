@@ -58,59 +58,43 @@ const App: React.FC = () => {
       
       if (attLogs) {
         setLogs(attLogs.map((l: any) => ({
-          id: l.id,
-          employeeId: l.employeeId,
-          name: l.name,
-          timestamp: l.timestamp,
-          type: l.type as 'IN' | 'OUT',
-          photo: l.photo,
-          location: { lat: Number(l.location_lat), lng: Number(l.location_lng) },
-          status: l.status as AttendanceStatus,
-          departmentId: l.departmentId
+          id: l.id, employeeId: l.employeeId, name: l.name, 
+          timestamp: l.timestamp, type: l.type, photo: l.photo, 
+          location: { lat: Number(l.location_lat), lng: Number(l.location_lng) }, 
+          status: l.status, departmentId: l.departmentId
         })));
       }
       if (config) setCompanyConfig({ name: config.name, logo: config.logo });
-    } catch (err) {
-      console.error("Fetch error:", err);
-    }
+    } catch (err) { console.error("Fetch error:", err); }
   };
 
   useEffect(() => {
     const init = async () => {
-      const saved = localStorage.getItem('const_v10_session');
+      const saved = localStorage.getItem('const_v11_session');
       if (saved && saved !== 'null') {
-        try { setCurrentUser(JSON.parse(saved)); } catch (e) { localStorage.removeItem('const_v10_session'); }
+        try { setCurrentUser(JSON.parse(saved)); } catch (e) { localStorage.removeItem('const_v11_session'); }
       }
       await fetchInitialData();
       setLoading(false);
     };
     init();
 
-    // إعداد الاشتراك اللحظي - التحقق من كل الجداول ذات الصلة
+    // الاشتراك اللحظي الفعال
     const channel = supabase
-      .channel('db-live-v10')
+      .channel('schema-v11')
       .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'attendance_logs' }, (payload) => {
         const raw = payload.new;
         const newLog: LogEntry = {
-          id: raw.id,
-          employeeId: raw.employeeId,
-          name: raw.name,
-          timestamp: raw.timestamp,
-          type: raw.type as 'IN' | 'OUT',
-          photo: raw.photo,
-          location: { lat: Number(raw.location_lat), lng: Number(raw.location_lng) },
-          status: raw.status as AttendanceStatus,
-          departmentId: raw.departmentId
+          id: raw.id, employeeId: raw.employeeId, name: raw.name, timestamp: raw.timestamp,
+          type: raw.type as 'IN' | 'OUT', photo: raw.photo, 
+          location: { lat: Number(raw.location_lat), lng: Number(raw.location_lng) }, 
+          status: raw.status as AttendanceStatus, departmentId: raw.departmentId
         };
         
         setLogs(prev => {
           if (prev.some(l => l.id === newLog.id)) return prev;
-          // تشغيل تنبيه صوتي للمدير
           if (currentUserRef.current === 'ADMIN') {
-            const soundUrl = newLog.type === 'IN' 
-              ? 'https://assets.mixkit.co/active_storage/sfx/2358/2358-preview.mp3' 
-              : 'https://assets.mixkit.co/active_storage/sfx/2354/2354-preview.mp3';
-            new Audio(soundUrl).play().catch(() => {});
+            new Audio('https://assets.mixkit.co/active_storage/sfx/2358/2358-preview.mp3').play().catch(() => {});
           }
           return [newLog, ...prev];
         });
@@ -121,9 +105,6 @@ const App: React.FC = () => {
           new Audio('https://assets.mixkit.co/active_storage/sfx/2354/2354-preview.mp3').play().catch(() => {});
         }
       })
-      .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'chat_messages' }, (payload) => {
-        setMessages(prev => [...prev, payload.new as ChatMessage]);
-      })
       .subscribe();
 
     return () => { supabase.removeChannel(channel); };
@@ -131,8 +112,8 @@ const App: React.FC = () => {
 
   useEffect(() => {
     if (!loading) {
-      if (currentUser) localStorage.setItem('const_v10_session', JSON.stringify(currentUser));
-      else localStorage.removeItem('const_v10_session');
+      if (currentUser) localStorage.setItem('const_v11_session', JSON.stringify(currentUser));
+      else localStorage.removeItem('const_v11_session');
     }
   }, [currentUser, loading]);
 
@@ -152,92 +133,67 @@ const App: React.FC = () => {
 
   const handleLogout = () => {
     setCurrentUser(null);
-    localStorage.removeItem('const_v10_session');
+    localStorage.removeItem('const_v11_session');
   };
 
-  if (loading) {
-    return (
-      <div className="min-h-screen bg-slate-900 flex flex-col items-center justify-center text-white font-['Cairo']">
-        <Loader2 className="animate-spin text-blue-500 mb-4" size={54} />
-        <p className="animate-pulse font-bold text-xs uppercase tracking-widest">تحديث القنوات الميدانية...</p>
-      </div>
-    );
-  }
+  if (loading) return (
+    <div className="min-h-screen bg-slate-900 flex flex-col items-center justify-center text-white font-['Cairo']">
+      <Loader2 className="animate-spin text-blue-500 mb-4" size={54} />
+      <p className="animate-pulse font-bold text-xs uppercase">مزامنة البيانات الميدانية...</p>
+    </div>
+  );
 
-  if (currentUser === 'ADMIN') {
-    return (
-      <AdminDashboard 
-        logs={logs} reports={reports} chatMessages={messages} 
-        employees={employees} departments={departments}
-        companyConfig={companyConfig}
-        lang={lang} onSetLang={setLang}
-        onSendMessage={async (m) => { await supabase.from('chat_messages').insert(m); }} 
-        onLogout={handleLogout} 
-        onUpdateEmployees={async (upd) => { setEmployees(upd); await supabase.from('employees').upsert(upd); }}
-        onUpdateDepartments={async (upd) => { setDepartments(upd); await supabase.from('departments').upsert(upd); }}
-        onUpdateAnnouncements={async (a) => { setAnnouncements(a); await supabase.from('announcements').upsert(a); }}
-        onUpdateFiles={async (f) => { setFiles(f); await supabase.from('files').upsert(f); }}
-        onUpdateCompanyConfig={async (c) => {
-          setCompanyConfig(c);
-          await supabase.from('company_config').upsert({ id: 1, name: c.name, logo: c.logo });
-        }}
-      />
-    );
-  }
+  if (currentUser === 'ADMIN') return (
+    <AdminDashboard 
+      logs={logs} reports={reports} chatMessages={messages} 
+      employees={employees} departments={departments} companyConfig={companyConfig}
+      lang={lang} onSetLang={setLang}
+      onSendMessage={async (m) => { await supabase.from('chat_messages').insert(m); }} 
+      onLogout={handleLogout} 
+      onUpdateEmployees={async (upd) => { setEmployees(upd); await supabase.from('employees').upsert(upd); }}
+      onUpdateDepartments={async (upd) => { setDepartments(upd); await supabase.from('departments').upsert(upd); }}
+      onUpdateAnnouncements={async (a) => { setAnnouncements(a); await supabase.from('announcements').upsert(a); }}
+      onUpdateFiles={async (f) => { setFiles(f); await supabase.from('files').upsert(f); }}
+      onUpdateCompanyConfig={async (c) => { setCompanyConfig(c); await supabase.from('company_config').upsert({ id: 1, name: c.name, logo: c.logo }); }}
+    />
+  );
 
-  if (currentUser) {
-    return (
-      <WorkerDashboard 
-        employee={currentUser as Employee} chatMessages={messages} departmentFiles={files} 
-        announcements={announcements} companyConfig={companyConfig}
-        lang={lang} onSetLang={setLang}
-        onSendMessage={async (m) => { await supabase.from('chat_messages').insert(m); }} 
-        onLogout={handleLogout} 
-        onNewLog={async (nl) => { 
-          // 1. تحديث الحالة المحلية فوراً
-          setLogs(prev => [nl, ...prev]); 
-          // 2. إرسال لـ Supabase
-          const { error: dbError } = await supabase.from('attendance_logs').insert({
-            id: nl.id, 
-            employeeId: nl.employeeId, 
-            name: nl.name, 
-            timestamp: nl.timestamp,
-            type: nl.type, 
-            photo: nl.photo, 
-            location_lat: nl.location.lat, 
-            location_lng: nl.location.lng, 
-            status: nl.status, 
-            departmentId: nl.departmentId
-          });
-          if (dbError) {
-            console.error("Supabase Save Error:", dbError.message);
-            alert("حدث خطأ أثناء حفظ البيانات في السحابة.");
-          }
-        }} 
-        onNewReport={async (r) => { 
-          setReports(prev => [r, ...prev]); 
-          await supabase.from('reports').insert(r); 
-        }}
-      />
-    );
-  }
+  if (currentUser) return (
+    <WorkerDashboard 
+      employee={currentUser as Employee} chatMessages={messages} departmentFiles={files} 
+      announcements={announcements} companyConfig={companyConfig}
+      lang={lang} onSetLang={setLang}
+      onSendMessage={async (m) => { await supabase.from('chat_messages').insert(m); }} 
+      onLogout={handleLogout} 
+      onNewLog={async (nl) => { 
+        setLogs(prev => [nl, ...prev]); 
+        const { error: dbError } = await supabase.from('attendance_logs').insert({
+          id: nl.id, employeeId: nl.employeeId, name: nl.name, timestamp: nl.timestamp,
+          type: nl.type, photo: nl.photo, location_lat: nl.location.lat, 
+          location_lng: nl.location.lng, status: nl.status, departmentId: nl.departmentId
+        });
+        if (dbError) console.error("DB Error:", dbError.message);
+      }} 
+      onNewReport={async (r) => { setReports(prev => [r, ...prev]); await supabase.from('reports').insert(r); }}
+    />
+  );
 
   return (
     <div className="min-h-screen bg-slate-900 flex items-center justify-center p-4 font-['Cairo']" dir="rtl">
       <div className="w-full max-w-md">
         <div className="text-center mb-10 text-white">
-          <div className="w-24 h-24 bg-blue-600 rounded-[2.5rem] shadow-2xl mx-auto mb-6 flex items-center justify-center overflow-hidden border-4 border-white/10">
+          <div className="w-24 h-24 bg-blue-600 rounded-[2.5rem] shadow-2xl mx-auto mb-6 flex items-center justify-center border-4 border-white/10">
             {companyConfig.logo ? <img src={companyConfig.logo} className="w-full h-full object-cover" /> : <ShieldCheck size={48} />}
           </div>
           <h1 className="text-3xl font-bold mb-2">{companyConfig.name}</h1>
-          <p className="text-slate-400 text-sm tracking-widest font-bold uppercase">Field Connect v10</p>
+          <p className="text-slate-400 text-sm tracking-widest font-black uppercase">Field Terminal v11</p>
         </div>
         <div className="bg-white/10 backdrop-blur-xl p-8 rounded-[3rem] border border-white/10 shadow-2xl">
           <form onSubmit={handleLogin} className="space-y-6 text-white">
-            <input type="text" placeholder="رقم الهاتف" className="w-full bg-white/5 border border-white/20 rounded-2xl py-4 px-4 text-center font-bold outline-none focus:ring-2 focus:ring-blue-500 transition-all" value={phoneInput} onChange={(e) => setPhoneInput(e.target.value)} />
-            {phoneInput !== ADMIN_PIN && <input type="password" placeholder="كلمة المرور" className="w-full bg-white/5 border border-white/20 rounded-2xl py-4 px-4 text-center font-bold outline-none focus:ring-2 focus:ring-blue-500 transition-all" value={passwordInput} onChange={(e) => setPasswordInput(e.target.value)} />}
+            <input type="text" placeholder="رقم الهاتف" className="w-full bg-white/5 border border-white/20 rounded-2xl py-4 px-4 text-center font-bold" value={phoneInput} onChange={(e) => setPhoneInput(e.target.value)} />
+            {phoneInput !== ADMIN_PIN && <input type="password" placeholder="كلمة المرور" className="w-full bg-white/5 border border-white/20 rounded-2xl py-4 px-4 text-center font-bold" value={passwordInput} onChange={(e) => setPasswordInput(e.target.value)} />}
             {error && <p className="text-red-400 text-xs text-center font-bold">{error}</p>}
-            <button type="submit" className="w-full bg-blue-600 py-5 rounded-2xl font-black shadow-lg hover:bg-blue-700 transition-all active:scale-95 text-lg uppercase tracking-widest">دخول النظام</button>
+            <button type="submit" className="w-full bg-blue-600 py-5 rounded-2xl font-black shadow-lg text-lg uppercase tracking-widest">دخول النظام</button>
           </form>
         </div>
       </div>
